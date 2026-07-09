@@ -1,0 +1,10 @@
+﻿{
+  "functions": {
+    "api/research.js": {
+      "maxDuration": 60
+    },
+    "api/markets.js": {
+      "maxDuration": 30
+    }
+  }
+}

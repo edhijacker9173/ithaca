@@ -402,14 +402,18 @@ function formatMarketChange(change, changePercent) {
 }
 
 
+function marketBoardHasData(board) {
+  return Boolean(board?.items?.some(item => item.quote || item.index));
+}
+
 function marketSnapshotStatus(board) {
-  if (!board?.items?.some(item => item.quote || item.index)) return 'Market snapshot unavailable';
+  if (!marketBoardHasData(board)) return 'Market snapshot unavailable';
   return `Snapshot ${formatDate(board.generatedAt)}`;
 }
 
 function applyReportMarketSnapshot(report) {
   const snapshot = normalizeQuotePayload(report?.marketSnapshot);
-  if (!snapshot?.items?.some(item => item.quote || item.index)) return false;
+  if (!marketBoardHasData(snapshot)) return false;
   state.marketBoard = snapshot;
   state.marketStatus = marketSnapshotStatus(snapshot);
   return true;
@@ -429,7 +433,7 @@ function normalizeQuotePayload(payload) {
 
 function applyEmbeddedMarketSnapshot() {
   const snapshot = normalizeQuotePayload(window.MARKET_SNAPSHOT);
-  if (!snapshot?.items?.some(item => item.quote || item.index)) return false;
+  if (!marketBoardHasData(snapshot)) return false;
   state.marketBoard = snapshot;
   state.marketStatus = marketSnapshotStatus(snapshot);
   return true;
@@ -497,8 +501,8 @@ async function fetchMarketBoardDirect(signal) {
 async function loadMarketBoard(options = {}) {
   const signal = options.signal;
   const captureLabel = options.capture ? 'Capturing market snapshot' : 'Loading market data';
-  const canUseEmbeddedSnapshot = !options.capture;
-  const canUseBrowserMarketFallback = isLocalDocument();
+  const canUseEmbeddedSnapshot = true;
+  const canUseBrowserMarketFallback = true;
   state.marketStatus = captureLabel;
   renderStats();
 
@@ -523,7 +527,12 @@ async function loadMarketBoard(options = {}) {
       if (isAbortError(error)) throw error;
     }
     if (!payload && canUseBrowserMarketFallback) payload = await fetchMarketBoardDirect(signal);
-    state.marketBoard = normalizeQuotePayload(payload);
+    const normalized = normalizeQuotePayload(payload);
+    if (!marketBoardHasData(normalized) && canUseEmbeddedSnapshot && applyEmbeddedMarketSnapshot()) {
+      renderStats();
+      return state.marketBoard;
+    }
+    state.marketBoard = normalized;
     state.marketStatus = marketSnapshotStatus(state.marketBoard);
   } catch (error) {
     if (isAbortError(error)) throw error;
@@ -1253,7 +1262,7 @@ async function runScan() {
       setStatus('Browser fallback running', true);
       setScanProgress({
         percent: 0,
-        label: `Local backend unavailable (${backendError.message}). Keeping browser scan running...`
+        label: `API research unavailable (${backendError.message}). Running browser scan...`
       });
       payload = await runClientScan(Number(days), setScanProgress, controller.signal);
       payload.articlePullMethod = 'Browser scan';
@@ -1505,6 +1514,7 @@ async function init() {
 }
 
 init();
+
 
 
 

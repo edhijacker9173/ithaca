@@ -1,4 +1,4 @@
-# Ithaca Group Market Pulse
+﻿# Ithaca Group Market Pulse
 
 An AI Codex Project for recurring Ithaca Group market intelligence work.
 
@@ -65,6 +65,18 @@ The backend saves the latest report to `data/latest-report.json` and timestamped
 
 Refreshes now prefer this backend route, so the scan can continue as a background server task even if the browser tab is not active.
 
+## Public API deployment
+
+The public site now includes Vercel-style serverless endpoints in `api/`:
+
+```text
+/api/research
+/api/markets
+/api/latest
+```
+
+Deploy the folder to a host that supports Node serverless functions at `/api/*.js` routes, such as Vercel. Static-only hosts such as GitHub Pages will still return `HTTP 404` for `/api/research` because they cannot run backend code.
+
 ## Workflow
 
 1. Open the app.
@@ -83,6 +95,7 @@ The app also applies a relevance gate before adding stories. Articles must menti
 ## Notes
 
 Direct browser crawling is blocked by CORS on many news sources. This app uses Google News RSS, then Bing News RSS as a secondary feed, through public RSS proxy endpoints from the browser. Each region is scanned through several small searches, then merged and deduplicated, because long Boolean RSS queries can trigger HTTP 400 responses. For more controlled production use, replace the proxy path with an internal backend or approved news API.
+
 
 
 
