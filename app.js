@@ -1,4 +1,4 @@
-const REGION_ORDER = [
+﻿const REGION_ORDER = [
   'group',
   'singapore',
   'indonesia',
@@ -194,6 +194,11 @@ const RSS_FETCH_TIMEOUT_MS = 9000;
 const DIRECT_SOURCE_TIMEOUT_MS = 12000;
 const REGION_ARTICLE_TARGET = 12;
 const REGION_ARTICLE_LIMIT = 18;
+
+function isLocalDocument() {
+  const host = window.location.hostname;
+  return window.location.protocol === 'file:' || host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
 
 let state = {
   report: null,
@@ -491,10 +496,12 @@ async function fetchMarketBoardDirect(signal) {
 async function loadMarketBoard(options = {}) {
   const signal = options.signal;
   const captureLabel = options.capture ? 'Capturing market snapshot' : 'Loading market data';
+  const canUseEmbeddedSnapshot = !options.capture;
+  const canUseBrowserMarketFallback = isLocalDocument();
   state.marketStatus = captureLabel;
   renderStats();
 
-  if (applyEmbeddedMarketSnapshot()) {
+  if (window.location.protocol === 'file:' && canUseEmbeddedSnapshot && applyEmbeddedMarketSnapshot()) {
     renderStats();
     return state.marketBoard;
   }
@@ -509,16 +516,20 @@ async function loadMarketBoard(options = {}) {
   try {
     let payload = null;
     try {
-      const response = await fetchWithTimeout('/api/markets', { signal }, 12000);
+      const response = await fetchWithTimeout('/api/markets', { cache: 'no-store', signal }, 12000);
       if (response.ok) payload = await response.json();
     } catch (error) {
       if (isAbortError(error)) throw error;
     }
-    if (!payload) payload = await fetchMarketBoardDirect(signal);
+    if (!payload && canUseBrowserMarketFallback) payload = await fetchMarketBoardDirect(signal);
     state.marketBoard = normalizeQuotePayload(payload);
     state.marketStatus = marketSnapshotStatus(state.marketBoard);
   } catch (error) {
     if (isAbortError(error)) throw error;
+    if (canUseEmbeddedSnapshot && applyEmbeddedMarketSnapshot()) {
+      renderStats();
+      return state.marketBoard;
+    }
     state.marketBoard = null;
     state.marketStatus = 'Market snapshot unavailable';
   }
@@ -1136,6 +1147,10 @@ function backendBaseUrl() {
   return window.location.protocol === 'file:' ? LOCAL_BACKEND_ORIGIN : '';
 }
 
+function canRunBrowserScanFallback() {
+  return isLocalDocument();
+}
+
 async function fetchBackendReport(days, signal) {
   const baseUrl = backendBaseUrl();
   const url = `${baseUrl}/api/research?window=${encodeURIComponent(days)}`;
@@ -1219,6 +1234,9 @@ async function runScan() {
       if (stopEstimatedProgress) {
         stopEstimatedProgress();
         stopEstimatedProgress = null;
+      }
+      if (!canRunBrowserScanFallback()) {
+        throw new Error(`Backend refresh unavailable: ${backendError.message}`);
       }
       setStatus('Browser fallback running', true);
       setScanProgress({
@@ -1473,6 +1491,7 @@ async function init() {
 }
 
 init();
+
 
 
 
