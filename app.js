@@ -221,6 +221,7 @@ const els = {
   scanProgress: document.getElementById('scanProgress'),
   scanProgressBar: document.getElementById('scanProgressBar'),
   lastUpdated: document.getElementById('lastUpdated'),
+  articlePullMethod: document.getElementById('articlePullMethod'),
   heroStandfirst: document.getElementById('heroStandfirst'),
   windowSelect: document.getElementById('windowSelect'),
   regionTabs: document.getElementById('regionTabs'),
@@ -829,6 +830,13 @@ function enforceUniqueNewsContent(report) {
     regions: dedupeReportRegions(report.regions || [])
   };
 }
+function articlePullMethodForReport(report) {
+  if (!report) return 'Not run yet';
+  const explicit = report.articlePullMethod || report.articleFetchMethod || report.pullMethod;
+  if (explicit) return explicit;
+  return /browser proxy|browser scan/i.test(report.source || '') ? 'Browser scan' : 'API research';
+}
+
 function normalizeReport(report) {
   if (!report) return report;
   const uniqueReport = enforceUniqueNewsContent(report);
@@ -837,6 +845,7 @@ function normalizeReport(report) {
   return {
     ...uniqueReport,
     scanVersion: SCAN_VERSION,
+    articlePullMethod: articlePullMethodForReport(uniqueReport),
     summary: `Weekly scan completed across ${(uniqueReport.regions || []).length} markets with ${storyCount} unique stories in the last ${windowDays} days.`
   };
 }
@@ -1084,6 +1093,7 @@ function render() {
     return;
   }
   els.lastUpdated.textContent = formatDate(state.report.generatedAt);
+  els.articlePullMethod.textContent = articlePullMethodForReport(state.report);
   els.heroStandfirst.textContent = state.report.summary || 'Latest regional market intelligence is ready.';
   renderTabs();
   renderStats();
@@ -1095,6 +1105,7 @@ function render() {
 
 function renderEmptyShell() {
   els.lastUpdated.textContent = 'No report yet';
+  els.articlePullMethod.textContent = 'Not run yet';
   els.heroStandfirst.textContent = 'Run a weekly scan to populate major headlines across Ithaca, Optus, Telkomsel, AIS, Airtel, and Globe.';
   els.regionTabs.innerHTML = '';
   renderStats();
@@ -1223,6 +1234,7 @@ async function runScan() {
       stopEstimatedProgress = startEstimatedScanProgress(controller.signal);
       setScanProgress({ percent: 1, label: 'Background refresh running - safe to switch tabs' });
       payload = await fetchBackendReport(days, controller.signal);
+      payload.articlePullMethod = 'API research';
       throwIfAborted(controller.signal);
       if (stopEstimatedProgress) {
         stopEstimatedProgress();
@@ -1244,6 +1256,7 @@ async function runScan() {
         label: `Local backend unavailable (${backendError.message}). Keeping browser scan running...`
       });
       payload = await runClientScan(Number(days), setScanProgress, controller.signal);
+      payload.articlePullMethod = 'Browser scan';
     }
 
     throwIfAborted(controller.signal);
@@ -1310,6 +1323,7 @@ async function runClientScan(days, onProgress, signal) {
     generatedAt: new Date().toISOString(),
     windowDays: days,
     source: 'Google/Bing News RSS plus telco source-targeted queries via browser proxy',
+    articlePullMethod: 'Browser scan',
     scanVersion: SCAN_VERSION,
     summary: `Weekly scan completed across ${REGIONS.length} markets with ${storyCount} stories in the last ${days} days.`,
     regions

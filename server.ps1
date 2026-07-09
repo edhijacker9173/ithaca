@@ -1,4 +1,4 @@
-param(
+﻿param(
   [int]$Port = 8765,
   [int]$DefaultWindowDays = 7
 )
@@ -361,6 +361,7 @@ function Invoke-MarketScan {
     generatedAt = (Get-Date).ToUniversalTime().ToString('o')
     windowDays = $WindowDays
     source = 'Google News RSS plus telco source-targeted queries'
+    articlePullMethod = 'API research'
     scanVersion = 5
     summary = $summary
     regions = @($regions)
