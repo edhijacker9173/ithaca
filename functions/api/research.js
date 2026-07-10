@@ -1,4 +1,4 @@
-﻿const SCAN_VERSION = 5;
+const SCAN_VERSION = 5;
 const REGION_ARTICLE_TARGET = 12;
 const REGION_ARTICLE_LIMIT = 18;
 const FEED_TIMEOUT_MS = 10000;
@@ -42,6 +42,24 @@ const DIRECT_SOURCE_PAGES = {
   ]
 };
 
+const QUERY_NEWS_QUALIFIERS = ['telecom', 'telco', 'AI', '5G', 'network automation'];
+
+const DIRECT_RSS_FEEDS = [
+  { source: 'Tech Xplore', url: 'https://techxplore.com/rss-feed/' },
+  { source: 'Tech Xplore AI', url: 'https://techxplore.com/rss-feed/machine-learning-ai-news/' },
+  { source: 'Tech Xplore Telecom', url: 'https://techxplore.com/rss-feed/telecom-news/' },
+  { source: 'GSA', url: 'https://gsacom.com/feed/' },
+  { source: 'GSA 5G', url: 'https://gsacom.com/technology/5g/feed/' },
+  { source: 'GSA 5G Advanced', url: 'https://gsacom.com/technology/5g-advanced/feed/' },
+  { source: 'GSA Private Mobile Networks', url: 'https://gsacom.com/technology/private-mobile-networks/feed/' },
+  { source: 'GSA Non-Terrestrial Networks', url: 'https://gsacom.com/technology/non-terrestrial-networks/feed/' },
+  { source: 'GSA Spectrum', url: 'https://gsacom.com/technology/spectrum/feed/' },
+  { source: 'RCR Wireless', url: 'https://www.rcrwireless.com/feed' },
+  { source: 'TelecomLead', url: 'https://www.telecomlead.com/feed' },
+  { source: 'Light Reading', url: 'https://www.lightreading.com/rss.xml' },
+  { source: 'Total Telecom', url: 'https://www.totaltele.com/feed/' },
+  { source: 'Telecom Ramblings', url: 'https://telecomramblings.com/feed/' }
+];
 const JSON_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, OPTIONS',
@@ -129,12 +147,16 @@ function buildRegionQueries(region) {
   return Array.from(new Set([...(region.queries || []), ...sourceQueries]));
 }
 
+function googleNewsFeedUrl(term) {
+  return `https://news.google.com/rss/search?q=${encodeURIComponent(term)}&hl=en-SG&gl=SG&ceid=SG:en`;
+}
+
 function buildNewsFeedUrls(term) {
-  const encoded = encodeURIComponent(term);
-  return [
-    `https://news.google.com/rss/search?q=${encoded}&hl=en-SG&gl=SG&ceid=SG:en`,
-    `https://www.bing.com/news/search?q=${encoded}&format=rss`
-  ];
+  const googleTerms = [term, ...QUERY_NEWS_QUALIFIERS.map(qualifier => `${term} ${qualifier}`)];
+  return Array.from(new Set([
+    ...googleTerms.map(googleNewsFeedUrl),
+    `https://www.bing.com/news/search?q=${encodeURIComponent(term)}&format=rss`
+  ]));
 }
 
 function tagText(xml, tag) {
@@ -154,11 +176,11 @@ function cleanArticleTitle(title, source = '') {
   return cleaned.replace(/\s+-\s+[^-]{2,90}$/g, '').replace(/\s+/g, ' ').trim();
 }
 
-function parseRssItems(xml, fallbackUrl) {
+function parseRssItems(xml, fallbackUrl, fallbackSource = 'News RSS') {
   const blocks = String(xml).match(/<item\b[\s\S]*?<\/item>/gi) || [];
   return blocks.map(block => {
     const rawTitle = tagText(block, 'title');
-    const source = tagText(block, 'source') || tagText(block, 'publisher') || tagText(block, 'dc:creator') || sourceFromTitle(rawTitle) || 'News RSS';
+    const source = tagText(block, 'source') || tagText(block, 'publisher') || tagText(block, 'dc:creator') || sourceFromTitle(rawTitle) || fallbackSource;
     const title = cleanArticleTitle(rawTitle, source);
     const url = tagText(block, 'link') || tagText(block, 'guid') || fallbackUrl;
     const rawSummary = stripHtml(tagText(block, 'description') || tagText(block, 'summary') || tagText(block, 'content'));
@@ -169,11 +191,11 @@ function parseRssItems(xml, fallbackUrl) {
   }).filter(item => item.title);
 }
 
-const TELCO_CONTEXT_PATTERN = /\b(telco|telecom|telecommunications|mobile|wireless|5g|4g|broadband|fibre|fiber|network|spectrum|operator|carrier|subscriber|data centre|data center|datacentre|datacenter|cloud|cyber|security|tower|roaming|prepaid|postpaid|sim|esim|outage|disruption|service|coverage|earnings|revenue|profit|capex|shares|stock|market|ceo|chief executive|regulator|regulation|license|licence|partnership|collaboration|digital bank|fintech|gomo|ncs|nxera)\b/i;
+const TELCO_CONTEXT_PATTERN = /\b(telco|telecom|telecommunications|ai|artificial intelligence|generative ai|genai|machine learning|automation|network automation|mobile|wireless|5g|4g|broadband|fibre|fiber|network|spectrum|operator|carrier|subscriber|data centre|data center|datacentre|datacenter|cloud|cyber|security|tower|roaming|prepaid|postpaid|sim|esim|outage|disruption|service|coverage|earnings|revenue|profit|capex|shares|stock|market|ceo|chief executive|regulator|regulation|license|licence|partnership|collaboration|digital bank|fintech|gomo|ncs|nxera)\b/i;
 const OUT_OF_CONTEXT_PATTERN = /\b(miss globe|miss universe|beauty pageant|beauty contest|pageant|crown|contestant|candidate|swimsuit|national costume|golden globe|golden globes|globe theatre|globe soccer|globe life|globe and mail|boston globe)\b/i;
 
 function sourceLooksTelco(source) {
-  return /\b(telecoms|telecompaper|telecomlead|telecomtv|telecom review|light reading|rcr wireless|total telecom|capacity media|developing telecoms|asian telecom|channel newsasia|cna|business times|straits times|singapore business review|hardwarezone)\b/.test(normalizeComparableText(source || ''));
+  return /\b(telecoms|telecompaper|telecomlead|telecomtv|telecom review|light reading|rcr wireless|total telecom|capacity media|developing telecoms|asian telecom|tech xplore|gsa|global mobile suppliers association|telecom ramblings|channel newsasia|cna|business times|straits times|singapore business review|hardwarezone)\b/.test(normalizeComparableText(source || ''));
 }
 
 function hasTelcoContext(text) {
@@ -284,12 +306,34 @@ async function scanRegion(region, days) {
           matched = true;
           if (articles.length >= REGION_ARTICLE_LIMIT) break;
         }
-        if (matched) break;
+        if (articles.length >= REGION_ARTICLE_LIMIT) break;
       } catch (error) {
         termErrors.push(error.message);
       }
     }
     if (!matched) errors.push(termErrors.length ? `${term}: ${termErrors.join('; ')}` : `${term}: no recent stories`);
+  }
+
+  if (articles.length < REGION_ARTICLE_TARGET) {
+    for (const feed of DIRECT_RSS_FEEDS) {
+      if (articles.length >= REGION_ARTICLE_TARGET) break;
+      try {
+        const xml = await fetchText(feed.url, FEED_TIMEOUT_MS);
+        for (const item of parseRssItems(xml, feed.url, feed.source)) {
+          const publishedTime = new Date(item.publishedAt).getTime();
+          if (!Number.isNaN(publishedTime) && publishedTime < cutoff) continue;
+          const article = { ...item, summary: item.summary.length >= 260 ? `${item.summary.slice(0, 257).trim()}...` : item.summary, score: scoreStory(item.title, item.summary, item.publishedAt) };
+          const keys = [articleKey(article), urlKey(article.url)].filter(Boolean);
+          if (!keys.length || keys.some(key => seen.has(key))) continue;
+          if (!isTelcoRelevantArticle(article, region)) continue;
+          keys.forEach(key => seen.add(key));
+          articles.push(article);
+          if (articles.length >= REGION_ARTICLE_LIMIT) break;
+        }
+      } catch (error) {
+        errors.push(`${feed.source}: ${error.message}`);
+      }
+    }
   }
 
   if (articles.length < REGION_ARTICLE_TARGET) {
@@ -333,7 +377,7 @@ function dedupeReportRegions(regions) {
       if (!key || seen.has(key)) continue;
       seen.add(key);
       articles.push(article);
-      if (articles.length >= 8) break;
+      if (articles.length >= REGION_ARTICLE_LIMIT) break;
     }
     return { ...region, articles, error: articles.length ? null : region.error };
   });
@@ -346,7 +390,7 @@ async function runMarketScan(windowDays) {
     title: 'Ithaca Group Market Pulse',
     generatedAt: new Date().toISOString(),
     windowDays,
-    source: 'Google/Bing News RSS plus telco source-targeted queries via Cloudflare Pages Functions',
+    source: 'Google/Bing News RSS plus targeted telecom, AI, 5G, network automation, and validated direct RSS feeds via Cloudflare Pages Functions',
     articlePullMethod: 'API research',
     scanVersion: SCAN_VERSION,
     summary: `Weekly scan completed across ${REGIONS.length} markets with ${storyCount} stories in the last ${windowDays} days.`,
