@@ -1,4 +1,4 @@
-﻿const REGION_ORDER = [
+const REGION_ORDER = [
   'group',
   'singapore',
   'indonesia',
@@ -140,6 +140,24 @@ const DIRECT_SOURCE_PAGES = {
     }
   ]
 };
+const QUERY_NEWS_QUALIFIERS = ['telecom', 'telco', 'AI', '5G', 'network automation'];
+
+const DIRECT_RSS_FEEDS = [
+  { source: 'Tech Xplore', url: 'https://techxplore.com/rss-feed/' },
+  { source: 'Tech Xplore AI', url: 'https://techxplore.com/rss-feed/machine-learning-ai-news/' },
+  { source: 'Tech Xplore Telecom', url: 'https://techxplore.com/rss-feed/telecom-news/' },
+  { source: 'GSA', url: 'https://gsacom.com/feed/' },
+  { source: 'GSA 5G', url: 'https://gsacom.com/technology/5g/feed/' },
+  { source: 'GSA 5G Advanced', url: 'https://gsacom.com/technology/5g-advanced/feed/' },
+  { source: 'GSA Private Mobile Networks', url: 'https://gsacom.com/technology/private-mobile-networks/feed/' },
+  { source: 'GSA Non-Terrestrial Networks', url: 'https://gsacom.com/technology/non-terrestrial-networks/feed/' },
+  { source: 'GSA Spectrum', url: 'https://gsacom.com/technology/spectrum/feed/' },
+  { source: 'RCR Wireless', url: 'https://www.rcrwireless.com/feed' },
+  { source: 'TelecomLead', url: 'https://www.telecomlead.com/feed' },
+  { source: 'Light Reading', url: 'https://www.lightreading.com/rss.xml' },
+  { source: 'Total Telecom', url: 'https://www.totaltele.com/feed/' },
+  { source: 'Telecom Ramblings', url: 'https://telecomramblings.com/feed/' }
+];
 const REGION_SOURCE_SEARCH_PHRASES = {
   group: 'Ithaca',
   singapore: 'Ithaca',
@@ -152,6 +170,10 @@ const REGION_SOURCE_SEARCH_PHRASES = {
 
 function directSourcePagesForRegion(regionId) {
   return DIRECT_SOURCE_PAGES[regionId] || [];
+}
+
+function directRssFeedsForRegion() {
+  return DIRECT_RSS_FEEDS;
 }
 function sourceSearchPhrase(region) {
   return REGION_SOURCE_SEARCH_PHRASES[region.id] || region.company || region.label;
@@ -207,12 +229,16 @@ let state = {
   loading: false,
   scanProgressDetail: { percent: 0, label: 'Idle' },
   marketBoard: null,
-  marketStatus: 'Loading market data'
+  marketStatus: 'Loading market data',
+  scanPanelCollapsed: false
 };
 
 let activeScanController = null;
 
 const els = {
+  scanPanel: document.getElementById('scanPanel'),
+  scanPanelToggle: document.getElementById('scanPanelToggle'),
+  scanPercent: document.getElementById('scanPercent'),
   scanBtn: document.getElementById('scanBtn'),
   themeButtons: Array.from(document.querySelectorAll('[data-theme-option]')),
   exportBtn: document.getElementById('exportBtn'),
@@ -263,9 +289,25 @@ function formatEta(ms) {
 }
 
 function totalScanSearches() {
-  return REGIONS.reduce((sum, region) => sum + buildRegionQueries(region).length + directSourcePagesForRegion(region.id).length, 0);
+  return REGIONS.reduce((sum, region) => {
+    return sum + buildRegionQueries(region).length + directRssFeedsForRegion(region.id).length + directSourcePagesForRegion(region.id).length;
+  }, 0);
 }
 
+function syncScanPanelToggleLabel() {
+  if (!els.scanPanelToggle) return;
+  const percent = state.scanProgressDetail?.percent || 0;
+  const action = state.scanPanelCollapsed ? 'Expand' : 'Collapse';
+  els.scanPanelToggle.setAttribute('aria-label', `${action} status details, ${percent}% complete`);
+  els.scanPanelToggle.title = `${action} status details`;
+}
+
+function setScanPanelCollapsed(collapsed) {
+  state.scanPanelCollapsed = Boolean(collapsed);
+  if (els.scanPanel) els.scanPanel.classList.toggle('is-collapsed', state.scanPanelCollapsed);
+  if (els.scanPanelToggle) els.scanPanelToggle.setAttribute('aria-expanded', String(!state.scanPanelCollapsed));
+  syncScanPanelToggleLabel();
+}
 function setScanProgress(value) {
   const detail = typeof value === 'object' && value !== null ? value : { percent: Number(value) || 0 };
   const percent = detail.total
@@ -273,6 +315,8 @@ function setScanProgress(value) {
     : Number(detail.percent) || 0;
   const normalized = Math.max(0, Math.min(100, Math.round(percent)));
   state.scanProgressDetail = { ...detail, percent: normalized };
+  if (els.scanPercent) els.scanPercent.textContent = `${normalized}%`;
+  syncScanPanelToggleLabel();
   if (!els.scanProgress) return;
   if (els.scanProgressBar) {
     els.scanProgressBar.style.width = `${normalized}%`;
@@ -552,12 +596,16 @@ function stripHtml(value) {
   return div.textContent.replace(/\s+/g, ' ').trim();
 }
 
+function googleNewsFeedUrl(term) {
+  return `https://news.google.com/rss/search?q=${encodeURIComponent(term)}&hl=en-SG&gl=SG&ceid=SG:en`;
+}
+
 function buildNewsFeedUrls(term) {
-  const encoded = encodeURIComponent(term);
-  return [
-    `https://news.google.com/rss/search?q=${encoded}&hl=en-SG&gl=SG&ceid=SG:en`,
-    `https://www.bing.com/news/search?q=${encoded}&format=rss`
-  ];
+  const googleTerms = [term, ...QUERY_NEWS_QUALIFIERS.map(qualifier => `${term} ${qualifier}`)];
+  return Array.from(new Set([
+    ...googleTerms.map(googleNewsFeedUrl),
+    `https://www.bing.com/news/search?q=${encodeURIComponent(term)}&format=rss`
+  ]));
 }
 
 function sourceLabelFromUrl(url) {
@@ -616,6 +664,39 @@ function readItemText(item, selectors) {
     if (value) return value;
   }
   return '';
+}
+function extractRssArticles(xmlText, rssUrl, region, cutoff, seen, fallbackSource = 'News RSS', limit = REGION_ARTICLE_LIMIT) {
+  const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+  const articles = [];
+  const items = Array.from(doc.querySelectorAll('item'));
+  for (const item of items) {
+    const rawTitle = stripHtml(readItemText(item, ['title']));
+    if (!rawTitle) continue;
+    const rawDate = readItemText(item, ['pubDate', 'published', 'updated']) || Date.now();
+    const published = new Date(rawDate);
+    const publishedTime = published.getTime();
+    if (!Number.isNaN(publishedTime) && publishedTime < cutoff) continue;
+    const source = readItemText(item, ['source', 'publisher', 'dc\\:creator']) || sourceFromTitle(rawTitle) || fallbackSource;
+    const title = cleanArticleTitle(rawTitle, source);
+    const url = readItemText(item, ['link', 'guid']) || rssUrl;
+    const keys = [articleKey({ title, url }), urlKey(url)].filter(Boolean);
+    if (!keys.length || keys.some(key => seen.has(key))) continue;
+    const summary = stripHtml(readItemText(item, ['description', 'summary', 'content'])).slice(0, 260);
+    const publishedAt = Number.isNaN(publishedTime) ? new Date().toISOString() : published.toISOString();
+    const article = {
+      title,
+      summary: summary.length >= 260 ? `${summary.slice(0, 257).trim()}...` : summary,
+      source,
+      url,
+      publishedAt,
+      score: scoreStory(title, summary, publishedAt)
+    };
+    if (!isTelcoRelevantArticle(article, region)) continue;
+    keys.forEach(key => seen.add(key));
+    articles.push(article);
+    if (articles.length >= limit) break;
+  }
+  return articles;
 }
 function sourceFromTitle(title) {
   const parts = String(title || '').split(' - ');
@@ -690,7 +771,7 @@ function articleKey(article) {
   return key || urlKey(article?.url || '');
 }
 
-const TELCO_CONTEXT_PATTERN = /\b(telco|telecom|telecommunications|mobile|wireless|5g|4g|broadband|fibre|fiber|network|spectrum|operator|carrier|subscriber|data centre|data center|datacentre|datacenter|cloud|cyber|security|tower|roaming|prepaid|postpaid|sim|esim|outage|disruption|service|coverage|earnings|revenue|profit|capex|shares|stock|market|ceo|chief executive|regulator|regulation|license|licence|partnership|collaboration|digital bank|fintech|gomo|ncs|nxera)\b/i;
+const TELCO_CONTEXT_PATTERN = /\b(telco|telecom|telecommunications|ai|artificial intelligence|generative ai|genai|machine learning|automation|network automation|mobile|wireless|5g|4g|broadband|fibre|fiber|network|spectrum|operator|carrier|subscriber|data centre|data center|datacentre|datacenter|cloud|cyber|security|tower|roaming|prepaid|postpaid|sim|esim|outage|disruption|service|coverage|earnings|revenue|profit|capex|shares|stock|market|ceo|chief executive|regulator|regulation|license|licence|partnership|collaboration|digital bank|fintech|gomo|ncs|nxera)\b/i;
 const OUT_OF_CONTEXT_PATTERN = /\b(miss globe|miss universe|beauty pageant|beauty contest|pageant|crown|contestant|candidate|swimsuit|national costume|golden globe|golden globes|globe theatre|globe soccer|globe life|globe and mail|boston globe)\b/i;
 
 function hasTelcoContext(text) {
@@ -699,7 +780,7 @@ function hasTelcoContext(text) {
 
 function sourceLooksTelco(source) {
   const normalized = normalizeComparableText(source || '');
-  return /\b(telecoms|telecompaper|telecomlead|telecomtv|telecom review|light reading|rcr wireless|total telecom|capacity media|developing telecoms|asian telecom|channel newsasia|cna|business times|straits times|singapore business review|hardwarezone)\b/.test(normalized);
+  return /\b(telecoms|telecompaper|telecomlead|telecomtv|telecom review|light reading|rcr wireless|total telecom|capacity media|developing telecoms|asian telecom|tech xplore|gsa|global mobile suppliers association|telecom ramblings|channel newsasia|cna|business times|straits times|singapore business review|hardwarezone)\b/.test(normalized);
 }
 
 function regionCompanyMention(text, region) {
@@ -797,21 +878,51 @@ function isDuplicateNewsContent(meta, existing) {
   return false;
 }
 
+function articleTimeValue(article) {
+  const time = new Date(article?.publishedAt || article?.updatedAt || 0).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function preferLatestArticle(existing, candidate) {
+  const existingTime = articleTimeValue(existing);
+  const candidateTime = articleTimeValue(candidate);
+  if (candidateTime > existingTime) return candidate;
+  if (candidateTime < existingTime) return existing;
+  return (candidate?.score || 0) > (existing?.score || 0) ? candidate : existing;
+}
+
+function sortArticlesForReport(articles) {
+  return [...(articles || [])].sort((a, b) => {
+    const scoreDiff = (b.score || 0) - (a.score || 0);
+    if (scoreDiff) return scoreDiff;
+    return articleTimeValue(b) - articleTimeValue(a);
+  });
+}
 function dedupeArticles(articles, sharedBank = []) {
   const localBank = [];
   const unique = [];
   (articles || []).forEach(article => {
     const meta = buildArticleDedupeMeta(article);
     if (!meta.keys.size && !meta.tokens.size) return;
-    const duplicate = [...localBank, ...sharedBank].some(existing => isDuplicateNewsContent(meta, existing));
+
+    const localIndex = localBank.findIndex(existing => isDuplicateNewsContent(meta, existing));
+    if (localIndex >= 0) {
+      const preferred = preferLatestArticle(unique[localIndex], article);
+      if (preferred !== unique[localIndex]) {
+        unique[localIndex] = preferred;
+        localBank[localIndex] = buildArticleDedupeMeta(preferred);
+      }
+      return;
+    }
+
+    const duplicate = sharedBank.some(existing => isDuplicateNewsContent(meta, existing));
     if (duplicate) return;
     localBank.push(meta);
-    sharedBank.push(meta);
     unique.push(article);
   });
+  sharedBank.push(...localBank);
   return unique;
 }
-
 function dedupeReportRegions(regions) {
   const sharedBank = [];
   const resultById = new Map();
@@ -821,8 +932,8 @@ function dedupeReportRegions(regions) {
   ];
 
   orderedForDedupe.forEach(region => {
-    const sorted = [...(region.articles || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
-    const articles = dedupeArticles(sorted, sharedBank).slice(0, 8);
+    const sorted = sortArticlesForReport(region.articles || []);
+    const articles = dedupeArticles(sorted, sharedBank).slice(0, REGION_ARTICLE_LIMIT);
     resultById.set(region.id, {
       ...region,
       articles,
@@ -857,6 +968,51 @@ function normalizeReport(report) {
     articlePullMethod: articlePullMethodForReport(uniqueReport),
     summary: `Weekly scan completed across ${(uniqueReport.regions || []).length} markets with ${storyCount} unique stories in the last ${windowDays} days.`
   };
+}
+function mergeArticleLists(previousArticles, freshArticles) {
+  const merged = [...(freshArticles || []), ...(previousArticles || [])];
+  return dedupeArticles(sortArticlesForReport(merged)).slice(0, REGION_ARTICLE_LIMIT);
+}
+
+function regionsById(regions) {
+  return new Map((regions || []).map(region => [region.id, region]));
+}
+
+function orderedRegionIds(previousRegions, freshRegions) {
+  const ids = new Set([
+    ...REGION_ORDER,
+    ...(freshRegions || []).map(region => region.id),
+    ...(previousRegions || []).map(region => region.id)
+  ]);
+  return Array.from(ids).filter(id => (freshRegions || []).some(region => region.id === id) || (previousRegions || []).some(region => region.id === id));
+}
+
+function mergeReports(previousReport, freshReport) {
+  if (!previousReport) return normalizeReport(freshReport);
+  if (!freshReport) return normalizeReport(previousReport);
+
+  const previousRegions = previousReport.regions || [];
+  const freshRegions = freshReport.regions || [];
+  const previousById = regionsById(previousRegions);
+  const freshById = regionsById(freshRegions);
+  const regions = orderedRegionIds(previousRegions, freshRegions).map(id => {
+    const previousRegion = previousById.get(id);
+    const freshRegion = freshById.get(id);
+    const articles = mergeArticleLists(previousRegion?.articles || [], freshRegion?.articles || []);
+    return {
+      ...(previousRegion || {}),
+      ...(freshRegion || {}),
+      articles,
+      error: articles.length ? null : (freshRegion?.error || previousRegion?.error || null)
+    };
+  });
+
+  return normalizeReport({
+    ...previousReport,
+    ...freshReport,
+    previousGeneratedAt: previousReport.generatedAt,
+    regions
+  });
 }
 function scoreStory(title, summary, publishedAt) {
   const text = `${title} ${summary}`;
@@ -1271,7 +1427,7 @@ async function runScan() {
     throwIfAborted(controller.signal);
     const marketSnapshot = await marketSnapshotPromise;
     throwIfAborted(controller.signal);
-    payload = normalizeReport({ ...payload, marketSnapshot });
+    payload = mergeReports(state.report, normalizeReport({ ...payload, marketSnapshot }));
     state.report = payload;
     saveLocalReport(payload);
     if (activeScanController === controller) activeScanController = null;
@@ -1331,7 +1487,7 @@ async function runClientScan(days, onProgress, signal) {
     title: 'Ithaca Group Market Pulse',
     generatedAt: new Date().toISOString(),
     windowDays: days,
-    source: 'Google/Bing News RSS plus telco source-targeted queries via browser proxy',
+    source: 'Google/Bing News RSS plus targeted telecom, AI, 5G, network automation, and validated direct RSS feeds via browser proxy',
     articlePullMethod: 'Browser scan',
     scanVersion: SCAN_VERSION,
     summary: `Weekly scan completed across ${REGIONS.length} markets with ${storyCount} stories in the last ${days} days.`,
@@ -1341,8 +1497,9 @@ async function runClientScan(days, onProgress, signal) {
 async function scanRegion(region, days, onSearchComplete, signal) {
   throwIfAborted(signal);
   const queries = buildRegionQueries(region);
+  const directFeeds = directRssFeedsForRegion(region.id);
   const directPages = directSourcePagesForRegion(region.id);
-  const totalRegionSearches = queries.length + directPages.length;
+  const totalRegionSearches = queries.length + directFeeds.length + directPages.length;
   const cutoff = Date.now() - Number(days) * 86400000;
   const seen = new Set();
   const articles = [];
@@ -1375,37 +1532,13 @@ async function scanRegion(region, days, onSearchComplete, signal) {
       if (!canAcceptMore()) break;
       try {
         const xmlText = await fetchRssWithProxy(rssUrl, signal);
-        const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
-        const items = Array.from(doc.querySelectorAll('item'));
-        for (const item of items) {
-          const rawTitle = stripHtml(readItemText(item, ['title']));
-          if (!rawTitle) continue;
-          const rawDate = readItemText(item, ['pubDate', 'published', 'updated']) || Date.now();
-          const published = new Date(rawDate);
-          const publishedTime = published.getTime();
-          if (!Number.isNaN(publishedTime) && publishedTime < cutoff) continue;
-          const source = readItemText(item, ['source', 'publisher', 'dc\\:creator']) || sourceFromTitle(rawTitle) || 'News RSS';
-          const title = cleanArticleTitle(rawTitle, source);
-          const url = readItemText(item, ['link', 'guid']) || rssUrl;
-          const keys = [articleKey({ title, url }), urlKey(url)].filter(Boolean);
-          if (!keys.length || keys.some(key => seen.has(key))) continue;
-          const summary = stripHtml(readItemText(item, ['description', 'summary', 'content'])).slice(0, 260);
-          const publishedAt = Number.isNaN(publishedTime) ? new Date().toISOString() : published.toISOString();
-          const article = {
-            title,
-            summary: summary.length >= 260 ? `${summary.slice(0, 257).trim()}...` : summary,
-            source,
-            url,
-            publishedAt,
-            score: scoreStory(title, summary, publishedAt)
-          };
-          if (!isTelcoRelevantArticle(article, region)) continue;
-          keys.forEach(key => seen.add(key));
+        const feedArticles = extractRssArticles(xmlText, rssUrl, region, cutoff, seen, 'News RSS', REGION_ARTICLE_LIMIT - articles.length);
+        feedArticles.forEach(article => {
+          if (!canAcceptMore()) return;
           articles.push(article);
           termMatched = true;
-          if (!canAcceptMore()) break;
-        }
-        if (termMatched || !canAcceptMore()) break;
+        });
+        if (!canAcceptMore()) break;
       } catch (error) {
         if (isAbortError(error)) throw error;
         termErrors.push(error.message);
@@ -1416,6 +1549,25 @@ async function scanRegion(region, days, onSearchComplete, signal) {
       errors.push(termErrors.length ? `${term}: ${termErrors.join('; ')}` : `${term}: no recent stories from available feeds`);
     }
     markSearchComplete();
+  }
+
+  if (!hasEnoughArticles()) {
+    for (const feed of directFeeds) {
+      throwIfAborted(signal);
+      if (hasEnoughArticles()) break;
+      try {
+        const xmlText = await fetchRssWithProxy(feed.url, signal);
+        const feedArticles = extractRssArticles(xmlText, feed.url, region, cutoff, seen, feed.source, REGION_ARTICLE_LIMIT - articles.length);
+        feedArticles.forEach(article => {
+          if (!canAcceptMore()) return;
+          articles.push(article);
+        });
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        errors.push(`${feed.source}: ${error.message}`);
+      }
+      markSearchComplete();
+    }
   }
 
   if (!hasEnoughArticles()) {
@@ -1451,7 +1603,7 @@ async function scanRegion(region, days, onSearchComplete, signal) {
     shortLabel: region.shortLabel,
     company: region.company,
     queries,
-    articles: articles.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, REGION_ARTICLE_LIMIT),
+    articles: sortArticlesForReport(articles).slice(0, REGION_ARTICLE_LIMIT),
     error: !articles.length && errors.length ? 'News source rejected this regional scan. Try again or widen the scan window.' : null,
     diagnostics: errors
   };
@@ -1499,6 +1651,9 @@ els.themeButtons.forEach(button => {
   button.addEventListener('click', () => applyTheme(button.dataset.themeOption));
 });
 els.scanBtn.addEventListener('click', runScan);
+if (els.scanPanelToggle) {
+  els.scanPanelToggle.addEventListener('click', () => setScanPanelCollapsed(!state.scanPanelCollapsed));
+}
 els.exportBtn.addEventListener('click', exportReport);
 els.printBtn.addEventListener('click', () => window.print());
 els.searchInput.addEventListener('input', event => {
@@ -1509,6 +1664,7 @@ els.searchInput.addEventListener('input', event => {
 
 async function init() {
   applyTheme(loadTheme());
+  setScanPanelCollapsed(state.scanPanelCollapsed);
   await loadLatest();
   loadMarketBoard();
 }
